@@ -1,0 +1,24 @@
+; ############################################################################
+; ## WDOSX DOS Extender           Copyright (c) 1996, 1999, Michael Tippach ##
+; ##                                                                        ##
+; ## Released under the terms of the WDOSX license agreement.               ##
+; ############################################################################
+;
+; $Header: E:/RCS/WDOSX/0.95/SRC/win32/USER32.DEF 1.2 2000/03/19 16:28:45 MikeT Exp $
+;
+; ----------------------------------------------------------------------------
+;
+; $Log: USER32.DEF $
+; Revision 1.2  2000/03/19 16:28:45  MikeT
+; Added Import of Kernel32.FindResourceA
+;
+; Revision 1.1  1999/03/06 23:17:00  MikeT
+; Initial check in.
+;
+;
+; ----------------------------------------------------------------------------
+;
+; This is a very sophisticated DEF file for user32.wdl
+;
+IMPORTS      KERNEL32.GetOEMCP
+IMPORTS      KERNEL32.FindResourceA

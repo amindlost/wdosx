@@ -1,0 +1,615 @@
+; ############################################################################
+; ## WDOSX DOS Extender           Copyright (c) 1996, 1999, Michael Tippach ##
+; ##                                                                        ##
+; ## Released under the terms of the WDOSX license agreement.               ##
+; ############################################################################
+;
+; $Header: E:/RCS/WDOSX/0.95/SRC/legacy/CONSOLE.ASI 1.1 1999/02/07 18:12:32 MikeT Exp $
+;
+; ----------------------------------------------------------------------------
+;
+; $Log: CONSOLE.ASI $
+; Revision 1.1  1999/02/07 18:12:32  MikeT
+; Initial check in.
+;
+;
+; ----------------------------------------------------------------------------
+;
+; Old floating segment PE code which I'm too lazy to maintain any longer or to
+; even comment on. It should stay as is and eventually die.
+;
+
+
+; ############################################################################
+; ## Filename     :   console.asi                                           ##
+; ## Description  :   Win32 console I/O emulation                           ##
+; ## Author       :   Michael Tippach                                       ##
+; ## Creation Date:   1997/03/26                                            ##
+; ## Last Modified:   1997/07/15                                            ##
+; ############################################################################
+
+hStdout				equ			1
+
+ENABLE_PROCESSED_INPUT		equ			1
+ENABLE_LINE_INPUT      		equ			2
+ENABLE_ECHO_INPUT      		equ			4
+ENABLE_WINDOW_INPUT    		equ			8
+ENABLE_MOUSE_INPUT     		equ			10h
+
+ENABLE_PROCESSED_OUTPUT    	equ			1
+ENABLE_WRAP_AT_EOL_OUTPUT  	equ			2
+
+
+COORD				struc
+				X			dw ?
+				Y			dw ?
+COORD				ends
+
+SMALL_RECT			struc
+				Left			dw ?
+				Top			dw ?
+				Right			dw ?
+				Bottom			dw ?
+SMALL_RECT			ends
+
+CONSOLE_SCREEN_BUFFER_INFO	struc
+				dwSize			COORD <>
+				dwCursorPosition	COORD <>
+				wAttributes		dw ?
+				srWindow		SMALL_RECT <>
+				dwMaximumWindowSize	COORD <>
+CONSOLE_SCREEN_BUFFER_INFO	ends
+
+KEY_EVENT_RECORD		struc
+				wEventType		dd ?
+    				bKeyDown		dd ?
+				wRepeatCount		dw ?
+				wVirtualKeyCode		dw ? 
+				wVirtualScanCode	dw ?
+	  			Character		dw ? 
+				dwControlKeyState	dd ?
+KEY_EVENT_RECORD		ends
+
+RIGHT_ALT_PRESSED		equ	1
+LEFT_ALT_PRESSED		equ	2
+RIGHT_CTRL_PRESSED		equ	4
+LEFT_CTRL_PRESSED		equ	8
+SHIFT_PRESSED			equ	10h
+NUMLOCK_ON			equ	20h
+SCROLLLOCK_ON			equ	40h
+CAPSLOCK_ON			equ	80h
+ENHANCED_KEY			equ	100h
+
+
+GenerateKeyEvent	proc	near
+		mov	edx,[esp+8]
+		mov	eax,[esp+4]
+		mov	[edx][KEY_EVENT_RECORD.wEventType],1
+		mov	[edx][KEY_EVENT_RECORD.bKeyDown],1
+		mov	[edx][KEY_EVENT_RECORD.wRepeatCount],1
+
+; fixme:
+		mov	[edx][KEY_EVENT_RECORD.wVirtualScanCode],0
+		mov	byte ptr [edx][KEY_EVENT_RECORD.wVirtualScanCode],ah
+		sub	ah,ah
+		mov	[edx][KEY_EVENT_RECORD.Character],ax
+		mov	[edx][KEY_EVENT_RECORD.wVirtualKeyCode],ax
+
+		test	al,al
+		mov	eax,0
+		sete	ah
+		mov	[edx][KEY_EVENT_RECORD.dwControlKeyState],eax
+		mov	ah,2
+		int	16h
+
+; 			DOS           WIN
+; 0                  R SHIFT       R ALT
+; 1                  L SHIFT       L ALT
+; 2                  CTRL          R CTRL
+; 3                  ALT           L CTRL
+; 4                  SCROLL        SHIFT
+; 5                  NUM           NUM
+; 6                  CAPS          SCROLL
+; 7                  INS           CAPS
+
+		shl	eax,8
+		bt	eax,6+8	; caps
+		adc	al,al
+		bt	eax,4+8	; scroll
+		adc	al,al
+		bt	eax,5+8	; num
+		adc	al,al
+		bt	eax,0+8 ; shift
+		adc	al,al
+		bt	eax,1+8 ; shift again
+		setc	cl
+		or	al,cl
+		bt	eax,2+8 ; ctrl
+		adc	al,al
+		add	al,al
+		bt	eax,3+8 ; alt
+		adc	al,al
+		add	al,al
+		mov	byte ptr [edx][KEY_EVENT_RECORD.dwControlKeyState],al
+		retn	8
+
+GenerateKeyEvent	endp
+
+
+
+; Functions to be emulated:
+
+;+        AllocConsole
+;+        Beep
+;+        CreateConsoleScreenBuffer
+;	 DoMessageBoxA
+;+        FillConsoleOutputAttribute
+;+        FillConsoleOutputCharacterA
+;+        FlushConsoleInputBuffer
+;+        FreeConsole
+;+        GetACP
+;+        GetConsoleCP
+;+        GetConsoleCursorInfo
+;+        GetConsoleMode
+;+        GetConsoleOutputCP
+;++        GetConsoleScreenBufferInfo
+;        GetConsoleTitleA
+;++        GetLargestConsoleWindowSize
+;++        GetNumberOfConsoleInputEvents
+;        GetNumberOfConsoleMouseButtons
+;+	 GetOEMCP
+;++        PeekConsoleInputA
+;+        ReadConsoleA
+;++        ReadConsoleInputA
+;        ReadConsoleOutputA
+;        ReadConsoleOutputAttribute
+;        ReadConsoleOutputCharacterA
+;        ScrollConsoleScreenBufferA
+;        SetConsoleCP
+;        SetConsoleCursorInfo
+;++        SetConsoleCursorPosition
+;++        SetConsoleMode
+;        SetConsoleOutputCP
+;++        SetConsoleScreenBufferSize
+;++        SetConsoleTextAttribute
+;        SetConsoleTitleA
+;++        SetConsoleWindowInfo
+;        ShowConsoleCursor
+;        Sleep
+;        WaitForMultipleObjects
+;        WaitForSingleObject
+;        WriteConsoleA
+;        WriteConsoleInputA
+;        WriteConsoleOutputA
+;        WriteConsoleOutputAttribute
+;        WriteConsoleOutputCharacterA
+
+;		align	4
+;ConsoleFlags	dd	0
+;ConsoleBuffers	dd	04h	; #1 in use at startup, #2 left
+
+AllocConsole:
+
+;		mov	eax,ConsoleFlags
+;		and	eax,1
+;		jz	short @@alc00
+;		mov	eax,3
+;		int	10h
+;@@alc00:
+		sub	eax,eax
+		retn
+
+Beep:
+
+; The NT thing since the Borland C RTL is using this for SOUND()
+
+		movsx	ecx,word ptr [esp+4]
+		cmp	ecx,24
+		jng	short BeepDont
+		mov	eax,1193180
+		sub	edx,edx
+		div	ecx
+		mov	ecx,eax
+		mov	al,182
+		out	43h,al
+		mov	al,cl
+		out	42h,al
+		mov	al,ch
+		out	42h,al
+		in	al,61h
+		or	al,3
+		out	61h,al
+		mov	edx,[esp+8]
+		inc	edx
+		jz	short BeepDone
+		shld	ecx,edx,16
+		mov	ah,86h
+		int	15h
+BeepDont:
+		in	al,61h
+		and	al,0fch
+		out	061h,al
+BeepDone:
+		mov	eax,1
+		retn	8
+
+CreateConsoleScreenBuffer:
+
+;		mov	ecx,ConsoleBuffers
+;		bsf	eax,ecx
+;		jz	short CCSBError
+;		btr	ecx,eax
+;		mov	ConsoleBuffers,ecx
+;		or	eax,80000000h
+;		retn	20
+;CCSBError:
+		mov	eax,-1
+		retn	20
+
+;DoMessageBoxA:
+; 2do!
+;		retn	12
+
+FillConsoleOutputAttribute:
+		mov	ecx,[esp+12]
+		mov	eax,[esp+16]	; low = x, high = y
+		shr	eax,12		; y * 16
+		mov	edx,[esp+16]
+		and	eax,0ff000h
+		and	edx,0ffh
+		lea	eax,[eax*4+eax]
+		add	edx,eax
+		mov	eax,[esp+20]
+		mov	ecx,[esp+12]	; count
+		push	ds
+		mov	[eax],ecx
+		mov	ds,ZeroDataSelector
+		mov	eax,[esp+12]	; attribute
+@@fcoa00:
+		mov	[edx+edx+0b8001h],al
+		inc	edx
+		dec	ecx
+		jnz	@@fcoa00
+		pop	ds
+		mov	eax,1
+		retn	20
+
+
+FillConsoleOutputCharacterA:
+		mov	ecx,[esp+12]
+		mov	eax,[esp+16]	; low = x, high = y
+		shr	eax,12		; y * 16
+		mov	edx,[esp+16]
+		and	eax,0ff000h
+		and	edx,0ffh
+		lea	eax,[eax*4+eax]
+		add	edx,eax
+		mov	eax,[esp+20]
+		mov	ecx,[esp+12]	; count
+		push	ds
+		mov	[eax],ecx
+		mov	ds,ZeroDataSelector
+		mov	eax,[esp+12]	; character
+@@fcoc00:
+		mov	[edx+edx+0b8000h],al
+		inc	edx
+		dec	ecx
+		jnz	@@fcoc00
+		pop	ds
+		mov	eax,1
+		retn	20
+
+FlushConsoleInputBuffer:
+		mov	ah,1
+		int	16h
+		jz	short fcip01
+		sub	ah,ah
+		int	16h
+		jmp	short FlushConsoleInputBuffer
+fcip01:
+		mov	eax,1
+		retn	4
+
+FreeConsole:
+		mov	eax,1
+;		or	ConsoleFlags,eax
+		retn
+
+GetConsoleOutputCP:
+GetACP:
+GetConsoleCP:
+GetOEMCP:
+		mov	eax,437
+		retn
+
+GetConsoleCursorInfo:
+; size returned is bogus ( I cannot be bothered with that )
+; visibility is the true state
+		push	ebx
+		mov	ebx,[esp+8]
+		mov	ah,3
+		lea	ebx,[ebx+ebx-1]
+		int	10h
+		cmp	cl,ch
+		mov	edx,[esp+12]
+		sbb	ecx,ecx
+		pop	ebx
+		inc	ecx
+		mov	dword ptr [edx],16
+		mov	[edx+4],ecx
+		mov	eax,1
+		retn	8
+
+GetConsoleMode:
+		mov	ecx,[esp+8]
+		mov	eax,ConsoleMode
+		mov	[ecx],eax
+		mov	eax,1
+		retn	8
+
+GetConsoleScreenBufferInfo:
+
+		push	gs
+		push	ebx
+		mov	gs,ZeroDataSelector
+		movzx	eax,byte ptr gs:[484]
+		inc	eax
+		shl	eax,16
+		mov	ax,gs:[44ah]
+		mov	edx,[esp+16]
+		mov	[edx],eax
+		mov	[edx+18],eax
+		mov	eax,console_win_Start
+		cmp	eax,-1
+		jnz	short gksbi00
+		mov	eax,[edx+18]
+		mov	console_win_end,eax
+		sub	eax,eax
+		mov	console_win_start,eax
+		mov	console_attr,7
+gksbi00:
+		mov	[edx+10],eax
+		mov	eax,console_win_end
+		mov	[edx+14],eax
+		mov	eax,console_attr
+		mov	[edx+8],ax
+		mov	ah,0fh
+		int	10h
+		mov	ah,3
+		int	10h
+		movzx	eax,dh
+		shl	eax,16
+		mov	al,dl
+		mov	edx,[esp+16]
+		mov	[edx+4],eax
+		mov	eax,1
+		pop	ebx
+		pop	gs
+		retn	8
+
+;GetConsoleTitleA:
+
+GetLargestConsoleWindowSize:
+		push	gs
+		mov	gs,ZeroDataSelector
+		movzx	eax,byte ptr gs:[484]
+		inc	eax
+		shl	eax,16
+		mov	ax,gs:[44ah]
+		pop	gs
+		retn	4
+
+GetNumberOfConsoleInputEvents:
+		mov	edx,[esp+8]
+		sub	ecx,ecx
+		mov	ah,1
+		int	16h
+		setne	cl
+		mov	[edx],ecx
+		retn	8
+
+;GetNumberOfConsoleMouseButtons:
+
+PeekConsoleInputA:
+		mov	edx,[esp+16]
+		sub	ecx,ecx
+		mov	ah,1
+		int	16h
+		setne	cl
+		mov	[edx],ecx
+		jecxz	Pkinput01
+		push	dword ptr [esp+8]
+		push	eax
+		call	GenerateKeyEvent
+Pkinput01:
+		mov	eax,1
+		retn	16
+
+
+ReadConsoleA:		
+		 ; Maps to ReadFile
+
+		mov	eax,[esp+4]
+		test	eax,eax
+		jz	ReadFile
+		js	ReadFile
+		sub	eax,eax
+		retn	20
+
+
+ReadConsoleInputA:
+		mov	edx,[esp+16]
+		sub	ah,ah
+		int	16h
+		mov	dword ptr [edx],1
+		push	dword ptr [esp+8]
+		push	eax
+		call	GenerateKeyEvent
+		mov	eax,1
+		retn	16
+
+
+;ReadConsoleOutputA:
+
+;ReadConsoleOutputAttribute:
+
+;ReadConsoleOutputCharacterA:
+
+;ScrollConsoleScreenBufferA:
+
+;SetConsoleCP:
+
+;SetConsoleCursorInfo:
+
+SetConsoleCursorPosition:
+		push	ebx
+		mov	ah,0fh
+		int	10h
+		mov	edx,[esp+12]
+		mov	eax,edx
+		shr	eax,8
+		mov	dh,ah
+		mov	ah,2
+		int	10h
+		mov	eax,1
+		pop	ebx
+		retn	8
+
+SetConsoleMode:
+		mov	eax,[esp+8]
+		mov	ConsoleMode,eax
+		mov	eax,1
+		retn	8
+
+;SetConsoleOutputCP:
+
+SetConsoleScreenBufferSize:
+		cmp	dword ptr [esp+8],1c0050h
+		jnz	short scsbs000
+		mov	eax,83h
+		int	10h
+		push	ebx
+		mov	eax,1111h
+		sub	ebx,ebx
+		int	10h
+		pop	ebx
+		mov	eax,1
+		retn	8
+scsbs000:
+
+		cmp	dword ptr [esp+8],320028h
+		jnz	short scsbs001
+		mov	eax,81h
+		int	10h
+		push	ebx
+		mov	eax,1112h
+		sub	ebx,ebx
+		int	10h
+		pop	ebx
+		mov	eax,1
+		retn	8
+
+scsbs001:
+
+		cmp	dword ptr [esp+8],1c0028h
+		jnz	short scsbs002
+		mov	eax,81h
+		int	10h
+		push	ebx
+		mov	eax,1111h
+		sub	ebx,ebx
+		int	10h
+		pop	ebx
+		mov	eax,1
+		retn	8
+
+
+
+scsbs002:
+		cmp	dword ptr [esp+8],190050h
+		jnz	short scsbs00
+		mov	eax,83h
+		int	10h
+		mov	eax,1
+		retn	8
+scsbs00:
+		cmp	dword ptr [esp+8],190028h
+		jnz	short scsbs01
+		mov	eax,81h
+		int	10h
+		mov	eax,1
+		retn	8
+scsbs01:
+		cmp	dword ptr [esp+8],2b0050h
+		jnz	short scsbs02
+scsbs03:
+		mov	eax,83h
+		int	10h
+		push	ebx
+		mov	eax,1112h
+		sub	ebx,ebx
+		int	10h
+		pop	ebx
+		mov	eax,1
+		retn	8
+scsbs02:
+		cmp	dword ptr [esp+8],320050h
+		jz	short scsbs03
+		sub	eax,eax
+		retn	8
+
+SetConsoleTextAttribute:
+		mov	eax,[esp+8]
+		mov	console_attr,eax
+		retn	8
+
+;SetConsoleTitleA:
+
+SetConsoleWindowInfo:
+	mov	edx,[esp+12]
+	test	dword ptr [esp+8],-1
+	jz	short scwi00
+	mov	eax,[edx]
+	mov	console_win_start,eax
+	mov	eax,[edx+4]
+	mov	console_win_end,eax	
+	mov	eax,1
+	retn	12
+scwi00:
+	mov	eax,[edx]
+	add	ax,word ptr [offset console_win_start]
+	ror	eax,16
+	add	ax,word ptr [offset console_win_start+2]
+	ror	eax,16
+	mov	console_win_start,eax
+	mov	eax,[edx+4]
+	add	ax,word ptr [offset console_win_end]
+	ror	eax,16
+	add	ax,word ptr [offset console_win_end+2]
+	ror	eax,16
+	mov	console_win_end,eax
+	mov	eax,1
+	retn	12
+
+;ShowConsoleCursor:
+
+;Sleep:
+
+;WaitForMultipleObjects:
+
+;WaitForSingleObject:
+
+;WriteConsoleA:
+
+;WriteConsoleInputA:
+
+;WriteConsoleOutputA:
+
+;WriteConsoleOutputAttribute:
+
+;WriteConsoleOutputCharacterA:
+
+align	4
+console_win_start	dd	-1
+console_win_end		dd	-1
+console_attr		dd	7
